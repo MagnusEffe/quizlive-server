@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: quizlive-server
+    env: node
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: FRONTEND_URL
+        value: https://www.effeprod.net/apps/defi-interactif
+    autoDeploy: true

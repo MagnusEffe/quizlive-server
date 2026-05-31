@@ -1,0 +1,15 @@
+{
+  "name": "kahoot-pwa",
+  "version": "1.0.0",
+  "description": "Application quiz temps réel type Kahoot",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2",
+    "qrcode": "^1.5.3"
+  }
+}
