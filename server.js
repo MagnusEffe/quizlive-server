@@ -6,24 +6,17 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-const ALLOWED_ORIGINS = [
-  'https://www.effeprod.net',
-  'http://localhost:3000',   // dev local
-  'http://127.0.0.1:5500',  // Live Server VSCode
-];
-
 const io = new Server(server, {
-  cors: {
-    origin: (origin, cb) => {
-      // Allow requests with no origin (curl, Postman) or whitelisted origins
-      if (!origin || ALLOWED_ORIGINS.some(o => origin.startsWith(o))) {
-        cb(null, true);
-      } else {
-        cb(new Error('CORS bloqué : ' + origin));
-      }
-    },
-    methods: ['GET', 'POST'],
-  }
+  cors: { origin: '*', methods: ['GET', 'POST'] }
+});
+
+// CORS headers pour les endpoints REST Express
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
 });
 
 app.use(express.json());
