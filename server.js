@@ -242,13 +242,20 @@ function endQuestion(room) {
 
   const q = room.questions[room.currentQ];
   const leaderboard = getLeaderboard(room);
+  const isLast = room.currentQ === room.questions.length - 1;
 
   io.to(`room:${room.code}`).emit('game:questionEnd', {
     correctAnswer: q.correct,
     correctLabel: q.answers[q.correct],
     leaderboard,
-    isLast: room.currentQ === room.questions.length - 1,
+    isLast,
   });
+
+  // Déclenche automatiquement la fin de partie après un délai
+  // pour laisser le temps d'afficher la bonne réponse
+  if (isLast) {
+    setTimeout(() => endGame(room), 4000);
+  }
 }
 
 function endGame(room) {
