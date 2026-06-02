@@ -19,7 +19,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
+app.use(express.json({ limit: '20mb' }));
 
 // Health check for Render (keeps the instance awake)
 app.get('/health', (_, res) => res.json({ ok: true, rooms: Object.keys(rooms).length }));
@@ -170,6 +170,8 @@ io.on('connection', (socket) => {
       points,
       score: player.score,
       correctAnswer: q.correct,
+      correctLabel: q.answers[q.correct],
+      explication: q.explication || '',
     });
 
     // Tell host someone answered
