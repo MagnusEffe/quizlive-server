@@ -51,6 +51,16 @@ app.get('/api/room/:code', (req, res) => {
   res.json({ code: room.code, state: room.state, playerCount: Object.keys(room.players).length, questionCount: room.questions.length });
 });
 
+// Export endpoint: full player history for XLSX
+app.get('/api/room/:code/results', (req, res) => {
+  const room = rooms[req.params.code.toUpperCase()];
+  if (!room) return res.status(404).json({ error: 'Room not found' });
+  const players = Object.values(room.players)
+    .sort((a, b) => b.score - a.score)
+    .map((p, i) => ({ rank: i + 1, name: p.name, score: p.score, history: p.history }));
+  res.json({ players, questions: room.questions });
+});
+
 // ─── Socket.io ────────────────────────────────────────────────────────────────
 io.on('connection', (socket) => {
 
@@ -74,7 +84,7 @@ io.on('connection', (socket) => {
     if (Object.values(room.players).some(p => p.name.toLowerCase() === trimmed.toLowerCase()))
       return socket.emit('error', 'Ce pseudo est déjà pris');
 
-    room.players[socket.id] = { name: trimmed, score: 0, answered: false };
+    room.players[socket.id] = { name: trimmed, score: 0, answered: false, history: [] };
     socket.join(`room:${code}`);
     socket.data.room = code;
     socket.data.name = trimmed;
@@ -115,6 +125,19 @@ io.on('connection', (socket) => {
       points = 1000 + Math.round(500 * Math.max(0, 1 - elapsed / timeLimit));
       player.score += points;
     }
+
+    // Store answer detail for export
+    player.history.push({
+      questionIndex: room.currentQ,
+      question:      q.question,
+      given:         q.answers[answerIndex],
+      correct:       q.answers[q.correct],
+      isCorrect,
+      elapsed:       Math.round(elapsed / 100) / 10, // seconds, 1 decimal
+      basePoints:    isCorrect ? 1000 : 0,
+      speedBonus:    isCorrect ? points - 1000 : 0,
+      points,
+    });
 
     socket.emit('player:answerResult', {
       correct: isCorrect,
