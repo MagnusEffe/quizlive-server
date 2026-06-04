@@ -223,6 +223,7 @@ function endQuestion(room) {
   io.to(`room:${room.code}`).emit('game:questionEnd', {
     correctAnswer: q.correct,
     correctLabel:  q.answers[q.correct],
+    explication:   q.explication || '',
     leaderboard,
     isLast,
   });
