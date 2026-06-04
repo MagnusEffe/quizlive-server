@@ -23,7 +23,8 @@ app.use(express.json({ limit: '20mb' }));
 const rooms = {};
 
 function generateCode() {
-  return Math.random().toString(36).substring(2, 7).toUpperCase();
+  const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; // sans I et O pour éviter confusion
+  return Array.from({length: 5}, () => letters[Math.floor(Math.random() * letters.length)]).join('');
 }
 
 // ─── REST ─────────────────────────────────────────────────────────────────────
