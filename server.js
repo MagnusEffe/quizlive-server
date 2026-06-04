@@ -110,7 +110,9 @@ io.on('connection', (socket) => {
 
   // PLAYER ANSWER
   socket.on('player:answer', ({ code, answerIndex }) => {
-    const room = rooms[code?.toUpperCase() || socket.data?.room];
+    // Priorité au code stocké dans socket.data (plus fiable que l'URL client)
+    const roomCode = socket.data?.room || code?.toUpperCase();
+    const room = rooms[roomCode];
     if (!room) return;
     const player = room.players[socket.id];
     if (!player || player.answered) return;
@@ -151,7 +153,7 @@ io.on('connection', (socket) => {
 
     const answeredCount = Object.values(room.players).filter(p => p.answered).length;
     const totalPlayers  = Object.keys(room.players).length;
-    io.to(`host:${code}`).emit('host:answerUpdate', { answeredCount, totalPlayers });
+    io.to(`host:${roomCode}`).emit('host:answerUpdate', { answeredCount, totalPlayers });
     if (answeredCount === totalPlayers) endQuestion(room);
   });
 
