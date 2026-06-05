@@ -105,7 +105,14 @@ io.on('connection', (socket) => {
   socket.on('host:next', ({ code }) => {
     const room = rooms[code];
     if (!room || room.hostId !== socket.id) return;
-    if (room.state === 'results') nextQuestion(room);
+    if (room.state === 'results') {
+      // Check if last question was just played
+      if (room.currentQ >= room.questions.length - 1) {
+        endGame(room);
+      } else {
+        nextQuestion(room);
+      }
+    }
   });
 
   // PLAYER ANSWER
@@ -228,7 +235,7 @@ function endQuestion(room) {
     isLast,
   });
 
-  if (isLast) setTimeout(() => endGame(room), 4000);
+  // Si dernière question : l'hôte déclenche la fin manuellement via host:next
 }
 
 function endGame(room) {
