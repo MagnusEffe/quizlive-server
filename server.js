@@ -166,7 +166,9 @@ io.on('connection', (socket) => {
     player.answered = true;
     const elapsed = Date.now() - room.questionStart;
     const q = room.questions[room.currentQ];
-    const isCorrect = answerIndex === q.correct;
+    // correct peut être un tableau [0,2] ou un entier 1 (rétrocompatibilité)
+    const correctArr = Array.isArray(q.correct) ? q.correct : [q.correct];
+    const isCorrect = correctArr.includes(answerIndex);
     let points = 0;
     if (isCorrect) {
       const timeLimit = (q.time || 20) * 1000;
@@ -192,7 +194,8 @@ io.on('connection', (socket) => {
       points,
       score: player.score,
       correctAnswer: q.correct,
-      correctLabel: q.answers[q.correct],
+      correctLabel: (Array.isArray(q.correct) ? q.correct : [q.correct])
+                   .map(i => q.answers[i]).join(' / '),
       explication: q.explication || '',
     });
 
@@ -268,8 +271,9 @@ function endQuestion(room) {
   const isLast = room.currentQ === room.questions.length - 1;
 
   io.to(`room:${room.code}`).emit('game:questionEnd', {
-    correctAnswer: q.correct,
-    correctLabel:  q.answers[q.correct],
+    correctAnswers: Array.isArray(q.correct) ? q.correct : [q.correct],
+    correctLabel:  (Array.isArray(q.correct) ? q.correct : [q.correct])
+                   .map(i => q.answers[i]).join(' / '),
     explication:   q.explication || '',
     leaderboard,
     totalPlayers:  Object.keys(room.players).length,
