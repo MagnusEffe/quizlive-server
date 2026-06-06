@@ -90,7 +90,10 @@ io.on('connection', (socket) => {
     socket.data.room = code;
     socket.data.name = trimmed;
     socket.emit('player:joined', { name: trimmed, code });
+    const playerList = Object.values(room.players).map(p => ({ name: p.name }));
     io.to(`host:${code}`).emit('host:playerJoined', { players: getLeaderboard(room) });
+    // Diffuser la liste à tous les joueurs du lobby
+    io.to(`room:${code}`).emit('lobby:players', { players: playerList });
   });
 
   // HOST START
@@ -176,7 +179,9 @@ io.on('connection', (socket) => {
       return;
     }
     delete room.players[socket.id];
+    const playerList2 = Object.values(room.players).map(p => ({ name: p.name }));
     io.to(`host:${code}`).emit('host:playerLeft', { players: getLeaderboard(room) });
+    io.to(`room:${code}`).emit('lobby:players', { players: playerList2 });
   });
 });
 
@@ -247,8 +252,7 @@ function endGame(room) {
 function getLeaderboard(room) {
   return Object.entries(room.players)
     .map(([id, p]) => ({ id, name: p.name, score: p.score }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 10);
+    .sort((a, b) => b.score - a.score);
 }
 
 // ─── Start ────────────────────────────────────────────────────────────────────
