@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto  = require('crypto');
 const http    = require('http');
 const { Server } = require('socket.io');
 const QRCode  = require('qrcode');
@@ -85,15 +86,49 @@ io.on('connection', (socket) => {
     if (Object.values(room.players).some(p => p.name.toLowerCase() === trimmed.toLowerCase()))
       return socket.emit('error', 'Ce pseudo est déjà pris');
 
-    room.players[socket.id] = { name: trimmed, score: 0, answered: false, history: [] };
+    const token = crypto.randomBytes(16).toString('hex');
+    room.players[socket.id] = { name: trimmed, score: 0, answered: false, history: [], token };
+    socket.data.token = token;
     socket.join(`room:${code}`);
     socket.data.room = code;
     socket.data.name = trimmed;
-    socket.emit('player:joined', { name: trimmed, code });
+    socket.emit('player:joined', { name: trimmed, code, token });
     const playerList = Object.values(room.players).map(p => ({ name: p.name }));
     io.to(`host:${code}`).emit('host:playerJoined', { players: getLeaderboard(room) });
     // Diffuser la liste à tous les joueurs du lobby
     io.to(`room:${code}`).emit('lobby:players', { players: playerList });
+  });
+
+  // PLAYER RECONNECT
+  socket.on('player:reconnect', ({ code, token, name }) => {
+    const room = rooms[code?.toUpperCase()];
+    if (!room) return socket.emit('reconnect:failed', { reason: 'Room introuvable' });
+    if (room.state === 'lobby') return socket.emit('reconnect:failed', { reason: 'Partie pas encore commencée' });
+
+    // Find player by token
+    const entry = Object.entries(room.players).find(([, p]) => p.token === token && p.name === name);
+    if (!entry) return socket.emit('reconnect:failed', { reason: 'Token invalide' });
+
+    const [oldSocketId, player] = entry;
+
+    // Re-register under new socket ID
+    delete room.players[oldSocketId];
+    room.players[socket.id] = player;
+    player.answered = false; // reset answered for current question
+    socket.join(`room:${code}`);
+    socket.data.room  = code.toUpperCase();
+    socket.data.name  = name;
+    socket.data.token = token;
+
+    socket.emit('reconnect:ok', {
+      name:  player.name,
+      code:  code.toUpperCase(),
+      token: player.token,
+      score: player.score,
+      state: room.state,
+    });
+
+    io.to(`host:${code}`).emit('host:playerJoined', { players: getLeaderboard(room) });
   });
 
   // HOST START
