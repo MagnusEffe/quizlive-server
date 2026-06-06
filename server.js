@@ -232,6 +232,7 @@ function endQuestion(room) {
     correctLabel:  q.answers[q.correct],
     explication:   q.explication || '',
     leaderboard,
+    totalPlayers:  Object.keys(room.players).length,
     isLast,
   });
 
