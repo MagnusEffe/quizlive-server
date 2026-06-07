@@ -120,13 +120,50 @@ io.on('connection', (socket) => {
     socket.data.name  = name;
     socket.data.token = token;
 
-    socket.emit('reconnect:ok', {
+    const reconnectPayload = {
       name:  player.name,
       code:  code.toUpperCase(),
       token: player.token,
       score: player.score,
       state: room.state,
-    });
+    };
+    socket.emit('reconnect:ok', reconnectPayload);
+
+    // Si une question est en cours, renvoyer les données de la question
+    if (room.state === 'question' && room.currentQ >= 0) {
+      const q = room.questions[room.currentQ];
+      const elapsed = Date.now() - room.questionStart;
+      const remaining = Math.max(0, (q.time || 20) - Math.floor(elapsed / 1000));
+      socket.emit('game:question', {
+        index:     room.currentQ,
+        total:     room.questions.length,
+        question:  q.question,
+        answers:   q.answers,
+        timeLimit: remaining, // temps restant
+        image:     q.image || null,
+      });
+    } else if (room.state === 'reading' && room.currentQ >= 0) {
+      const q = room.questions[room.currentQ];
+      socket.emit('game:reading', {
+        index:    room.currentQ,
+        total:    room.questions.length,
+        question: q.question,
+        image:    q.image || null,
+        readTime: 5, // approximatif
+      });
+    } else if (room.state === 'results' && room.currentQ >= 0) {
+      const q = room.questions[room.currentQ];
+      const leaderboard = getLeaderboard(room);
+      const isLast = room.currentQ === room.questions.length - 1;
+      socket.emit('game:questionEnd', {
+        correctAnswers: Array.isArray(q.correct) ? q.correct : [q.correct],
+        correctLabel:  (Array.isArray(q.correct) ? q.correct : [q.correct]).map(i => q.answers[i]).join(' / '),
+        explication:   q.explication || '',
+        leaderboard,
+        totalPlayers:  Object.keys(room.players).length,
+        isLast,
+      });
+    }
 
     io.to(`host:${code}`).emit('host:playerJoined', { players: getLeaderboard(room) });
   });
