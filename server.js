@@ -235,7 +235,7 @@ io.on('connection', (socket) => {
 });
 
 // ─── Game logic ───────────────────────────────────────────────────────────────
-const READ_TIME = 10; // secondes de lecture avant les réponses
+const READ_TIME = 5; // secondes de lecture avant les réponses
 
 function nextQuestion(room) {
   // Snapshot à la première question
