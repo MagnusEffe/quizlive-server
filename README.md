@@ -1,4 +1,4 @@
-# ⚡ QuizLive — Application Quiz Temps Réel (type Kahoot)
+# ⚡ QuizLive — Application Quiz Temps Réel Multijoueur
 
 Application PWA multijoueur avec classement en temps réel, chronomètre et QR code.
 
@@ -86,7 +86,7 @@ Le bonus de rapidité diminue linéairement : répondre en 1 seconde ≈ +500 pt
 ## 📁 Structure du projet
 
 ```
-kahoot-pwa/
+quizlive/
 ├── server.js          # Serveur Node.js + Socket.io
 ├── package.json
 └── public/
