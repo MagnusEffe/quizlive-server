@@ -1,7 +1,7 @@
 {
-  "name": "kahoot-pwa",
+  "name": "quizlive",
   "version": "1.0.0",
-  "description": "Application quiz temps réel type Kahoot",
+  "description": "Application quiz temps réel multijoueur",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
