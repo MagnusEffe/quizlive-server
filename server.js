@@ -39,6 +39,7 @@ app.post('/api/room', async (req, res) => {
   rooms[code] = {
     code, hostId: null, questions,
     players: {}, state: 'lobby', currentQ: -1, timer: null, questionStart: null,
+    registeredPlayers: null, // snapshot au lancement de la 1ère question
   };
 
   const frontendBase = process.env.FRONTEND_URL || 'https://www.effeprod.net/apps/defi-interactif';
@@ -78,96 +79,69 @@ io.on('connection', (socket) => {
 
   // PLAYER JOIN
   socket.on('player:join', ({ code, name }) => {
-    const room = rooms[code?.toUpperCase()];
+    const roomCode = code?.toUpperCase();
+    const room = rooms[roomCode];
     if (!room) return socket.emit('error', 'Room introuvable');
-    if (room.state !== 'lobby') return socket.emit('error', 'Partie déjà commencée');
+
     const trimmed = name?.trim().substring(0, 20);
     if (!trimmed) return socket.emit('error', 'Pseudo invalide');
-    if (Object.values(room.players).some(p => p.name.toLowerCase() === trimmed.toLowerCase()))
-      return socket.emit('error', 'Ce pseudo est déjà pris');
+    const nameLower = trimmed.toLowerCase();
 
-    const token = crypto.randomBytes(16).toString('hex');
-    room.players[socket.id] = { name: trimmed, score: 0, answered: false, history: [], token };
-    socket.data.token = token;
-    socket.join(`room:${code}`);
-    socket.data.room = code;
-    socket.data.name = trimmed;
-    socket.emit('player:joined', { name: trimmed, code, token });
-    const playerList = Object.values(room.players).map(p => ({ name: p.name }));
-    io.to(`host:${code}`).emit('host:playerJoined', { players: getLeaderboard(room) });
-    // Diffuser la liste à tous les joueurs du lobby
-    io.to(`room:${code}`).emit('lobby:players', { players: playerList });
-  });
+    if (room.state === 'lobby') {
+      // Inscription normale
+      if (Object.values(room.players).some(p => p.name.toLowerCase() === nameLower))
+        return socket.emit('error', 'Ce pseudo est déjà pris');
 
-  // PLAYER RECONNECT
-  socket.on('player:reconnect', ({ code, token, name }) => {
-    const room = rooms[code?.toUpperCase()];
-    if (!room) return socket.emit('reconnect:failed', { reason: 'Room introuvable' });
-    if (room.state === 'lobby') return socket.emit('reconnect:failed', { reason: 'Partie pas encore commencée' });
+      room.players[socket.id] = { name: trimmed, score: 0, answered: false, history: [] };
+      socket.data.room = roomCode;
+      socket.data.name = trimmed;
+      socket.join(`room:${roomCode}`);
+      socket.emit('player:joined', { name: trimmed, code: roomCode });
+      const playerList = Object.values(room.players).map(p => ({ name: p.name }));
+      io.to(`host:${roomCode}`).emit('host:playerJoined', { players: getLeaderboard(room) });
+      io.to(`room:${roomCode}`).emit('lobby:players', { players: playerList });
 
-    // Find player by token
-    const entry = Object.entries(room.players).find(([, p]) => p.token === token && p.name === name);
-    if (!entry) return socket.emit('reconnect:failed', { reason: 'Token invalide' });
+    } else {
+      // Partie en cours — reconnexion par nom
+      if (!room.registeredPlayers || !room.registeredPlayers.has(nameLower))
+        return socket.emit('error', "Ce pseudo n'est pas inscrit dans cette partie");
 
-    const [oldSocketId, player] = entry;
+      if (Object.values(room.players).some(p => p.name.toLowerCase() === nameLower))
+        return socket.emit('error', 'Ce pseudo est déjà connecté');
 
-    // Re-register under new socket ID
-    delete room.players[oldSocketId];
-    room.players[socket.id] = player;
-    player.answered = false; // reset answered for current question
-    socket.join(`room:${code}`);
-    socket.data.room  = code.toUpperCase();
-    socket.data.name  = name;
-    socket.data.token = token;
+      room.players[socket.id] = { name: trimmed, score: 0, answered: false, history: [] };
+      socket.data.room = roomCode;
+      socket.data.name = trimmed;
+      socket.join(`room:${roomCode}`);
 
-    const reconnectPayload = {
-      name:  player.name,
-      code:  code.toUpperCase(),
-      token: player.token,
-      score: player.score,
-      state: room.state,
-    };
-    socket.emit('reconnect:ok', reconnectPayload);
+      socket.emit('reconnect:ok', { name: trimmed, code: roomCode, token: null, score: 0, state: room.state });
 
-    // Si une question est en cours, renvoyer les données de la question
-    if (room.state === 'question' && room.currentQ >= 0) {
-      const q = room.questions[room.currentQ];
-      const elapsed = Date.now() - room.questionStart;
-      const remaining = Math.max(0, (q.time || 20) - Math.floor(elapsed / 1000));
-      socket.emit('game:question', {
-        index:     room.currentQ,
-        total:     room.questions.length,
-        question:  q.question,
-        answers:   q.answers,
-        timeLimit: remaining, // temps restant
-        image:     q.image || null,
-      });
-    } else if (room.state === 'reading' && room.currentQ >= 0) {
-      const q = room.questions[room.currentQ];
-      socket.emit('game:reading', {
-        index:    room.currentQ,
-        total:    room.questions.length,
-        question: q.question,
-        image:    q.image || null,
-        readTime: 5, // approximatif
-      });
-    } else if (room.state === 'results' && room.currentQ >= 0) {
-      const q = room.questions[room.currentQ];
-      const leaderboard = getLeaderboard(room);
-      const isLast = room.currentQ === room.questions.length - 1;
-      socket.emit('game:questionEnd', {
-        correctAnswers: Array.isArray(q.correct) ? q.correct : [q.correct],
-        correctLabel:  (Array.isArray(q.correct) ? q.correct : [q.correct]).map(i => q.answers[i]).join(' / '),
-        explication:   q.explication || '',
-        leaderboard,
-        totalPlayers:  Object.keys(room.players).length,
-        isLast,
-      });
+      if (room.state === 'question' && room.currentQ >= 0) {
+        const q = room.questions[room.currentQ];
+        const remaining = Math.max(1, (q.time||20) - Math.floor((Date.now()-room.questionStart)/1000));
+        socket.emit('game:question', {
+          index: room.currentQ, total: room.questions.length,
+          question: q.question, answers: q.answers, timeLimit: remaining, image: q.image||null,
+        });
+      } else if (room.state === 'reading' && room.currentQ >= 0) {
+        const q = room.questions[room.currentQ];
+        socket.emit('game:reading', {
+          index: room.currentQ, total: room.questions.length,
+          question: q.question, image: q.image||null, readTime: 5,
+        });
+      } else if (room.state === 'results' && room.currentQ >= 0) {
+        const q = room.questions[room.currentQ];
+        const corrArr = Array.isArray(q.correct) ? q.correct : [q.correct];
+        socket.emit('game:questionEnd', {
+          correctAnswers: corrArr, correctLabel: corrArr.map(i => q.answers[i]).join(' / '),
+          explication: q.explication||'', leaderboard: getLeaderboard(room),
+          totalPlayers: Object.keys(room.players).length,
+          isLast: room.currentQ === room.questions.length-1,
+        });
+      }
+      io.to(`host:${roomCode}`).emit('host:playerJoined', { players: getLeaderboard(room) });
     }
-
-    io.to(`host:${code}`).emit('host:playerJoined', { players: getLeaderboard(room) });
   });
-
   // HOST START
   socket.on('host:start', ({ code }) => {
     const room = rooms[code];
@@ -264,6 +238,12 @@ io.on('connection', (socket) => {
 const READ_TIME = 10; // secondes de lecture avant les réponses
 
 function nextQuestion(room) {
+  // Snapshot à la première question
+  if (room.currentQ === -1 && !room.registeredPlayers) {
+    room.registeredPlayers = new Set(
+      Object.values(room.players).map(p => p.name.toLowerCase())
+    );
+  }
   room.currentQ++;
   if (room.currentQ >= room.questions.length) return endGame(room);
 
