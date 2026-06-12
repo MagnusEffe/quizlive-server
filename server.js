@@ -433,6 +433,15 @@ function endQuestion(room) {
 function endGame(room) {
   room.state = 'podium';
   io.to(`room:${room.code}`).emit('game:over', { leaderboard: getLeaderboard(room) });
+
+  // Fermer la salle après un délai (laisse le temps d'afficher le podium)
+  clearTimeout(room.timer);
+  room.timer = setTimeout(() => {
+    io.to(`room:${room.code}`).emit('game:hostLeft');
+    // Déconnecter tous les sockets de la room
+    io.in(`room:${room.code}`).disconnectSockets(true);
+    delete rooms[room.code];
+  }, 30000); // 30s pour consulter le podium
 }
 
 function getLeaderboard(room) {
