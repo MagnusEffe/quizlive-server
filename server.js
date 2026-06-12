@@ -40,6 +40,9 @@ app.post('/api/room', async (req, res) => {
     code, hostId: null, questions,
     players: {}, state: 'lobby', currentQ: -1, timer: null, questionStart: null,
     registeredPlayers: null, // snapshot au lancement de la 1ère question
+    spectators: {},           // socket.id -> { name }
+    prevLeaderboard: null,    // classement avant la question en cours (pour deltas)
+    streaks: {},              // nom (lowercase) -> série de bonnes réponses en cours
   };
 
   const frontendBase = process.env.FRONTEND_URL || 'https://www.effeprod.net/apps/defi-interactif';
@@ -152,6 +155,54 @@ io.on('connection', (socket) => {
       io.to(`host:${roomCode}`).emit('host:playerJoined', { players: getLeaderboard(room) });
     }
   });
+  // SPECTATOR JOIN
+  socket.on('spectator:join', ({ code, name }) => {
+    const roomCode = code?.toUpperCase();
+    const room = rooms[roomCode];
+    if (!room) return socket.emit('error', 'Room introuvable');
+
+    const trimmed = (name || '').trim().substring(0, 20);
+    room.spectators[socket.id] = { name: trimmed || 'Anonyme' };
+    socket.data.room = roomCode;
+    socket.data.spectator = true;
+    socket.join(`room:${roomCode}`);
+
+    socket.emit('spectator:joined', { code: roomCode });
+
+    // Renvoyer l'état courant
+    if (room.state === 'question' && room.currentQ >= 0) {
+      const q = room.questions[room.currentQ];
+      const remaining = Math.max(1, (q.time||20) - Math.floor((Date.now()-room.questionStart)/1000));
+      socket.emit('game:question', {
+        index: room.currentQ, total: room.questions.length,
+        question: q.question, answers: q.answers, timeLimit: remaining, image: q.image||null,
+      });
+    } else if (room.state === 'reading' && room.currentQ >= 0) {
+      const q = room.questions[room.currentQ];
+      socket.emit('game:reading', {
+        index: room.currentQ, total: room.questions.length,
+        question: q.question, image: q.image||null, readTime: 5,
+      });
+    } else if (room.state === 'results' && room.currentQ >= 0) {
+      const q = room.questions[room.currentQ];
+      const corrArr = Array.isArray(q.correct) ? q.correct : [q.correct];
+      socket.emit('game:questionEnd', {
+        correctAnswers: corrArr, correctLabel: corrArr.map(i => q.answers[i]).join(' / '),
+        explication: q.explication||'', leaderboard: getLeaderboard(room),
+        totalPlayers: Object.keys(room.players).length,
+        isLast: room.currentQ === room.questions.length-1,
+      });
+    } else if (room.state === 'podium') {
+      socket.emit('game:over', { leaderboard: getLeaderboard(room) });
+    }
+
+    // Compteur de réponses reçues si une question est en cours
+    if (room.state === 'question') {
+      const answeredCount = Object.values(room.players).filter(p => p.answered).length;
+      socket.emit('spectator:answerCount', { answered: answeredCount, total: Object.keys(room.players).length });
+    }
+  });
+
   // HOST START
   socket.on('host:start', ({ code }) => {
     const room = rooms[code];
@@ -195,6 +246,18 @@ io.on('connection', (socket) => {
       const timeLimit = (q.time || 20) * 1000;
       points = 1000 + Math.round(500 * Math.max(0, 1 - elapsed / timeLimit));
       player.score += points;
+
+      // Suivi de la réponse correcte la plus rapide pour le spectateur
+      if (!room.fastestCorrect || elapsed < room.fastestCorrect.elapsed) {
+        room.fastestCorrect = { name: player.name, elapsed };
+      }
+
+      // Série de bonnes réponses
+      const nameKey = player.name.toLowerCase();
+      room.streaks[nameKey] = (room.streaks[nameKey] || 0) + 1;
+    } else {
+      const nameKey = player.name.toLowerCase();
+      room.streaks[nameKey] = 0;
     }
 
     // Mettre à jour le score dans le snapshot pour la reconnexion
@@ -230,6 +293,7 @@ io.on('connection', (socket) => {
     const answeredCount = Object.values(room.players).filter(p => p.answered).length;
     const totalPlayers  = Object.keys(room.players).length;
     io.to(`host:${roomCode}`).emit('host:answerUpdate', { answeredCount, totalPlayers });
+    io.to(`room:${roomCode}`).emit('spectator:answerCount', { answered: answeredCount, total: totalPlayers });
     if (answeredCount === totalPlayers) endQuestion(room);
   });
 
@@ -243,6 +307,10 @@ io.on('connection', (socket) => {
       io.to(`room:${code}`).emit('game:hostLeft');
       // Délai pour laisser le message arriver avant de supprimer la room
       setTimeout(() => { delete rooms[code]; }, 2000);
+      return;
+    }
+    if (room.spectators[socket.id]) {
+      delete room.spectators[socket.id];
       return;
     }
     delete room.players[socket.id];
@@ -264,6 +332,10 @@ function nextQuestion(room) {
   }
   room.currentQ++;
   if (room.currentQ >= room.questions.length) return endGame(room);
+
+  // Snapshot du classement AVANT cette question (pour calculer les deltas après)
+  room.prevLeaderboard = getLeaderboard(room);
+  room.fastestCorrect = null;
 
   const q = room.questions[room.currentQ];
   const timeLimit = q.time || 20;
@@ -313,6 +385,46 @@ function endQuestion(room) {
     leaderboard,
     totalPlayers:  Object.keys(room.players).length,
     isLast,
+  });
+
+  // ── Statistiques spectateur ──────────────────────────────────────────────
+  // Réponse la plus rapide
+  let fastest = null;
+  if (room.fastestCorrect) {
+    fastest = {
+      name: room.fastestCorrect.name,
+      seconds: Math.round(room.fastestCorrect.elapsed / 100) / 10,
+    };
+  }
+
+  // Deltas de classement (comparaison avec le classement précédent)
+  let climber = null, dropper = null;
+  if (room.prevLeaderboard && room.prevLeaderboard.length > 1) {
+    const prevRank = {};
+    room.prevLeaderboard.forEach((p, i) => { prevRank[p.name.toLowerCase()] = i; });
+
+    let bestGain = 0, worstLoss = 0;
+    leaderboard.forEach((p, i) => {
+      const key = p.name.toLowerCase();
+      if (prevRank[key] === undefined) return; // nouveau joueur (reconnexion)
+      const delta = prevRank[key] - i; // positif = a gagné des places
+      if (delta > bestGain) { bestGain = delta; climber = { name: p.name, places: delta }; }
+      if (-delta > worstLoss) { worstLoss = -delta; dropper = { name: p.name, places: -delta }; }
+    });
+  }
+
+  // Meilleure série de bonnes réponses en cours
+  let bestStreak = null;
+  Object.entries(room.streaks).forEach(([nameKey, streak]) => {
+    if (streak >= 2 && (!bestStreak || streak > bestStreak.streak)) {
+      // Retrouver le nom avec la bonne casse
+      const p = leaderboard.find(p => p.name.toLowerCase() === nameKey);
+      if (p) bestStreak = { name: p.name, streak };
+    }
+  });
+
+  io.to(`room:${room.code}`).emit('spectator:questionEnd', {
+    fastest, climber, dropper, bestStreak,
   });
 
   // Si dernière question : l'hôte déclenche la fin manuellement via host:next
